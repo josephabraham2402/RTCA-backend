@@ -2,6 +2,7 @@ require('dotenv').config();
 const http = require('http');
 const app = require('./app');
 const connectDB = require('./Config/db');
+const Message = require('./Models/messageModel');
 
 // Connect to database
 connectDB();
@@ -19,19 +20,79 @@ const io = new Server(server, {
     } 
 });
 
+const onlineUsers = new Set();
+
 io.on('connection', (socket) => {
     console.log('A user connected:', socket.id);
 
     // User joins their own room to receive private messages/events
     socket.on('register', (userId) => {
         if (userId) {
+            socket.userId = userId;
             socket.join(userId);
             console.log(`User ${userId} joined their personal room`);
+            
+            onlineUsers.add(userId);
+            io.emit('user_online', userId);
+            socket.emit('online_users', Array.from(onlineUsers));
+        }
+    });
+
+    socket.on('send_message', async (data) => {
+        try {
+            const newMessage = new Message({
+                sender: data.sender,
+                receiver: data.receiver,
+                text: data.text,
+                status: 'sent'
+            });
+            await newMessage.save();
+
+            // Emit to receiver
+            io.to(data.receiver).emit('receive_message', newMessage);
+            socket.emit('message_sent', newMessage);
+
+            // Check if receiver is online to mark as delivered
+            const receiverSockets = await io.in(data.receiver).fetchSockets();
+            if (receiverSockets.length > 0) {
+                newMessage.status = 'delivered';
+                await newMessage.save();
+                io.to(data.sender).emit('message_status_update', {
+                    messageId: newMessage._id,
+                    status: 'delivered',
+                    receiverId: data.receiver
+                });
+                io.to(data.receiver).emit('message_status_update', {
+                    messageId: newMessage._id,
+                    status: 'delivered',
+                    receiverId: data.receiver
+                });
+            }
+        } catch (error) {
+            console.error("Error sending message", error);
+        }
+    });
+
+    socket.on('mark_seen', async ({ messageIds, senderId, receiverId }) => {
+        try {
+            await Message.updateMany(
+                { _id: { $in: messageIds } },
+                { $set: { status: 'seen' } }
+            );
+            
+            // Notify the sender that their messages were seen
+            io.to(senderId).emit('messages_seen', { messageIds, receiverId });
+        } catch (error) {
+            console.error("Error marking seen", error);
         }
     });
 
     socket.on('disconnect', () => {
         console.log('User disconnected:', socket.id);
+        if (socket.userId) {
+            onlineUsers.delete(socket.userId);
+            io.emit('user_offline', socket.userId);
+        }
     });
 });
 
@@ -40,4 +101,17 @@ app.set('io', io);
 
 server.listen(PORT, () => {
     console.log(`Server running on port ${PORT}`);
+});
+
+// Graceful shutdown for nodemon restarts to prevent EADDRINUSE
+process.once('SIGUSR2', () => {
+    server.close(() => {
+        process.kill(process.pid, 'SIGUSR2');
+    });
+});
+
+process.on('SIGINT', () => {
+    server.close(() => {
+        process.exit(0);
+    });
 });

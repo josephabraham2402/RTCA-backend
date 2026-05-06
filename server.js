@@ -43,7 +43,10 @@ io.on('connection', (socket) => {
             const newMessage = new Message({
                 sender: data.sender,
                 receiver: data.receiver,
-                text: data.text,
+                text: data.text || '',
+                fileUrl: data.fileUrl,
+                fileType: data.fileType,
+                fileName: data.fileName,
                 status: 'sent'
             });
             await newMessage.save();
@@ -84,6 +87,37 @@ io.on('connection', (socket) => {
             io.to(senderId).emit('messages_seen', { messageIds, receiverId });
         } catch (error) {
             console.error("Error marking seen", error);
+        }
+    });
+
+    socket.on('edit_message', async ({ messageId, newText, receiverId }) => {
+        try {
+            const message = await Message.findById(messageId);
+            if (message && message.sender.toString() === socket.userId) {
+                message.text = newText;
+                message.isEdited = true;
+                await message.save();
+                
+                io.to(receiverId).emit('message_edited', { messageId, newText });
+                socket.emit('message_edited', { messageId, newText });
+            }
+        } catch (error) {
+            console.error("Error editing message", error);
+        }
+    });
+
+    socket.on('delete_message', async ({ messageId, receiverId }) => {
+        try {
+            const message = await Message.findById(messageId);
+            if (message && message.sender.toString() === socket.userId) {
+                message.isDeleted = true;
+                await message.save();
+                
+                io.to(receiverId).emit('message_deleted', { messageId });
+                socket.emit('message_deleted', { messageId });
+            }
+        } catch (error) {
+            console.error("Error deleting message", error);
         }
     });
 

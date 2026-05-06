@@ -179,3 +179,115 @@ exports.getFriends = async (req, res) => {
         res.status(500).json({ message: 'Server error' });
     }
 };
+
+exports.removeFriend = async (req, res) => {
+    try {
+        const currentUserId = req.user.id;
+        const friendId = req.params.friendId;
+
+        const user = await User.findById(currentUserId);
+        const friend = await User.findById(friendId);
+
+        if (!user || !friend) {
+            return res.status(404).json({ message: 'User not found' });
+        }
+
+        user.friends = user.friends.filter(id => id.toString() !== friendId);
+        friend.friends = friend.friends.filter(id => id.toString() !== currentUserId);
+
+        await user.save();
+        await friend.save();
+
+        const io = req.app.get('io');
+        if (io) {
+            io.to(friendId.toString()).emit('friend_removed', currentUserId);
+        }
+
+        res.status(200).json({ message: 'Friend removed successfully' });
+    } catch (error) {
+        console.error('Error removing friend:', error);
+        res.status(500).json({ message: 'Server error' });
+    }
+};
+
+exports.blockUser = async (req, res) => {
+    try {
+        const currentUserId = req.user.id;
+        const targetUserId = req.body.userId;
+
+        if (currentUserId === targetUserId) {
+            return res.status(400).json({ message: "You cannot block yourself" });
+        }
+
+        const user = await User.findById(currentUserId);
+        const targetUser = await User.findById(targetUserId);
+
+        if (!user || !targetUser) {
+            return res.status(404).json({ message: 'User not found' });
+        }
+
+        if (!user.blockedUsers) user.blockedUsers = [];
+        if (!user.blockedUsers.includes(targetUserId)) {
+            user.blockedUsers.push(targetUserId);
+        }
+
+        user.friends = user.friends.filter(id => id.toString() !== targetUserId);
+        targetUser.friends = targetUser.friends.filter(id => id.toString() !== currentUserId);
+
+        await user.save();
+        await targetUser.save();
+
+        const io = req.app.get('io');
+        if (io) {
+            io.to(targetUserId.toString()).emit('user_blocked', currentUserId);
+        }
+
+        res.status(200).json({ message: 'User blocked successfully' });
+    } catch (error) {
+        console.error('Error blocking user:', error);
+        res.status(500).json({ message: 'Server error' });
+    }
+};
+
+exports.toggleMute = async (req, res) => {
+    try {
+        const currentUserId = req.user.id;
+        const targetUserId = req.body.userId;
+
+        const user = await User.findById(currentUserId);
+        if (!user) {
+            return res.status(404).json({ message: 'User not found' });
+        }
+
+        if (!user.mutedChats) user.mutedChats = [];
+        
+        let isMuted = false;
+        const index = user.mutedChats.indexOf(targetUserId);
+        if (index > -1) {
+            user.mutedChats.splice(index, 1);
+        } else {
+            user.mutedChats.push(targetUserId);
+            isMuted = true;
+        }
+
+        await user.save();
+        res.status(200).json({ message: isMuted ? 'Chat muted' : 'Chat unmuted', isMuted, mutedChats: user.mutedChats });
+    } catch (error) {
+        console.error('Error toggling mute:', error);
+        res.status(500).json({ message: 'Server error' });
+    }
+};
+
+exports.getMutedChats = async (req, res) => {
+    try {
+        const user = await User.findById(req.user.id);
+        if (!user) {
+            return res.status(404).json({ message: 'User not found' });
+        }
+        res.status(200).json(user.mutedChats || []);
+    } catch (error) {
+        console.error('Error getting muted chats:', error);
+        res.status(500).json({ message: 'Server error' });
+    }
+};
+

@@ -51,25 +51,60 @@ io.on('connection', (socket) => {
             });
             await newMessage.save();
 
-            // Emit to receiver
-            io.to(data.receiver).emit('receive_message', newMessage);
-            socket.emit('message_sent', newMessage);
+            const Group = require('./Models/groupModel');
+            const group = await Group.findById(data.receiver).catch(() => null);
 
-            // Check if receiver is online to mark as delivered
-            const receiverSockets = await io.in(data.receiver).fetchSockets();
-            if (receiverSockets.length > 0) {
-                newMessage.status = 'delivered';
-                await newMessage.save();
-                io.to(data.sender).emit('message_status_update', {
-                    messageId: newMessage._id,
-                    status: 'delivered',
-                    receiverId: data.receiver
-                });
-                io.to(data.receiver).emit('message_status_update', {
-                    messageId: newMessage._id,
-                    status: 'delivered',
-                    receiverId: data.receiver
-                });
+            if (group) {
+                let newlyDeliveredTo = [];
+                // Emit to all group members
+                for (const memberId of group.members) {
+                    if (memberId.toString() !== data.sender.toString()) {
+                        const memberSockets = await io.in(memberId.toString()).fetchSockets();
+                        if (memberSockets.length > 0) {
+                            newlyDeliveredTo.push(memberId);
+                        }
+                        io.to(memberId.toString()).emit('receive_message', newMessage);
+                    }
+                }
+                
+                if (newlyDeliveredTo.length > 0) {
+                    newMessage.deliveredTo = newlyDeliveredTo;
+                    if (newlyDeliveredTo.length >= group.members.length - 1) {
+                        newMessage.status = 'delivered';
+                    }
+                    await newMessage.save();
+                }
+
+                socket.emit('message_sent', newMessage);
+                
+                if (newlyDeliveredTo.length > 0) {
+                    io.to(data.sender).emit('message_status_update', {
+                        messageId: newMessage._id,
+                        status: newMessage.status,
+                        receiverId: data.receiver
+                    });
+                }
+            } else {
+                // Emit to single receiver
+                io.to(data.receiver).emit('receive_message', newMessage);
+                socket.emit('message_sent', newMessage);
+
+                // Check if receiver is online to mark as delivered
+                const receiverSockets = await io.in(data.receiver).fetchSockets();
+                if (receiverSockets.length > 0) {
+                    newMessage.status = 'delivered';
+                    await newMessage.save();
+                    io.to(data.sender).emit('message_status_update', {
+                        messageId: newMessage._id,
+                        status: 'delivered',
+                        receiverId: data.receiver
+                    });
+                    io.to(data.receiver).emit('message_status_update', {
+                        messageId: newMessage._id,
+                        status: 'delivered',
+                        receiverId: data.receiver
+                    });
+                }
             }
         } catch (error) {
             console.error("Error sending message", error);
@@ -78,13 +113,39 @@ io.on('connection', (socket) => {
 
     socket.on('mark_seen', async ({ messageIds, senderId, receiverId }) => {
         try {
-            await Message.updateMany(
-                { _id: { $in: messageIds } },
-                { $set: { status: 'seen' } }
-            );
-            
-            // Notify the sender that their messages were seen
-            io.to(senderId).emit('messages_seen', { messageIds, receiverId });
+            const Group = require('./Models/groupModel');
+            const group = await Group.findById(senderId).catch(() => null);
+
+            if (group) {
+                const messages = await Message.find({ _id: { $in: messageIds } });
+                let fullySeenMessageIds = [];
+                let sendersToNotify = new Set();
+                for (let message of messages) {
+                    if (message.sender.toString() !== receiverId && !message.seenBy.includes(receiverId)) {
+                        message.seenBy.push(receiverId);
+                        if (message.seenBy.length >= group.members.length - 1) {
+                            message.status = 'seen';
+                            fullySeenMessageIds.push(message._id);
+                        }
+                        await message.save();
+                        sendersToNotify.add(message.sender.toString());
+                    }
+                }
+                
+                if (fullySeenMessageIds.length > 0) {
+                    sendersToNotify.forEach(sender => {
+                        io.to(sender).emit('messages_seen', { messageIds: fullySeenMessageIds, receiverId: senderId });
+                    });
+                }
+            } else {
+                await Message.updateMany(
+                    { _id: { $in: messageIds } },
+                    { $set: { status: 'seen' } }
+                );
+                
+                // Notify the sender that their messages were seen
+                io.to(senderId).emit('messages_seen', { messageIds, receiverId });
+            }
         } catch (error) {
             console.error("Error marking seen", error);
         }

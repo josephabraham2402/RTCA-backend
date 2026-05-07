@@ -40,7 +40,15 @@ const messageSchema = new mongoose.Schema({
         type: String,
         enum: ['sent', 'delivered', 'seen'],
         default: 'sent'
-    }
+    },
+    deliveredTo: [{
+        type: mongoose.Schema.Types.ObjectId,
+        ref: 'User'
+    }],
+    seenBy: [{
+        type: mongoose.Schema.Types.ObjectId,
+        ref: 'User'
+    }]
 }, { timestamps: true });
 
 // Compound index for significantly faster querying of conversation histories

@@ -40,7 +40,10 @@ exports.signup = async (req, res) => {
             token,
             user: {
                 id: user._id,
-                email: user.email
+                email: user.email,
+                name: user.name || '',
+                username: user.username || '',
+                avatar: user.avatar || ''
             }
         });
 
@@ -79,7 +82,10 @@ exports.login = async (req, res) => {
             token,
             user: {
                 id: user._id,
-                email: user.email
+                email: user.email,
+                name: user.name || '',
+                username: user.username || '',
+                avatar: user.avatar || ''
             }
         });
 

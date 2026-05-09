@@ -13,6 +13,20 @@ const userSchema = new mongoose.Schema({
         type: String,
         required: true
     },
+    name: {
+        type: String,
+        default: ''
+    },
+    username: {
+        type: String,
+        unique: true,
+        sparse: true,
+        trim: true
+    },
+    avatar: {
+        type: String,
+        default: ''
+    },
     friendRequests: [{
         type: mongoose.Schema.Types.ObjectId,
         ref: 'User'
